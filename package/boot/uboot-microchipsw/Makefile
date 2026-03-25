@@ -3,10 +3,10 @@ include $(TOPDIR)/rules.mk
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_URL:=https://github.com/microchip-ung/u-boot.git
-PKG_SOURCE_DATE:=2025-09-22
-PKG_SOURCE_VERSION:=c1abab62a00a6b8f43f663a0a30dd0a7fd6a4e95
-PKG_MIRROR_HASH:=6405c426afd8bacbb4cc985da4ca1bd04b54a0d2aa3bb3ba8f7571dbe5913055
+PKG_SOURCE_URL:=https://github.com/novarq/u-boot.git
+PKG_SOURCE_DATE:=2026-03-25
+PKG_SOURCE_VERSION:=2165dbed95a92aae757021ed07feae40b0a0deb7
+PKG_MIRROR_HASH:=88544cd1f0fe8a0bd6486cbfe28eb9fe3c0cac2feaf99225d73d920fceaf81b1
 
 PKG_MAINTAINER:=Robert Marko <robert.marko@sartura.hr>
 
@@ -24,14 +24,14 @@ define U-Boot/ev23x71a
   NAME:=Microchip EV23X71A
   BUILD_DEVICES:=microchip_ev23x71a
   BUILD_SUBTARGET:=lan969x
-  UBOOT_CONFIG:=mchp_lan969x
+  UBOOT_CONFIG:=microchip_ev23x71a
 endef
 
 define U-Boot/tactical-1000
   NAME:=Novarq Tactical 1000
   BUILD_DEVICES:=novarq_tactical-1000
   BUILD_SUBTARGET:=lan969x
-  UBOOT_CONFIG:=mchp_lan969x
+  UBOOT_CONFIG:=novarq_tactical_1000
 endef
 
 UBOOT_TARGETS:= \
