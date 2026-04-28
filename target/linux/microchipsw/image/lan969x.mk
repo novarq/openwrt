@@ -18,6 +18,14 @@ define Build/lan969x-gpt-emmc
 	rm $@.tmp
 endef
 
+define Build/lan969x-gpt-nor
+	cp $@ $@.tmp 2>/dev/null || true
+	ptgen -g -o $@.tmp -a 1 -l 1024 \
+			-t 0x83	-N fip		-r	-p 1M@512k
+	cat $@.tmp >> $@
+	rm $@.tmp
+endef
+
 define Build/tactical-1000-gpt-emmc
 	cp $@ $@.tmp 2>/dev/null || true
 	ptgen -g -o $@.tmp -a 1 -l 1024 \
@@ -43,7 +51,7 @@ define Device/microchip_ev23x71a
 	SOC := lan9696
 	DEVICE_DTS_DIR := $(DTS_DIR)
 	DEVICE_PACKAGES := kmod-i2c-mux-gpio
-	IMAGES += emmc-atf-gpt.gz emmc-gpt.img.gz
+	IMAGES += emmc-atf-gpt.gz emmc-gpt.img.gz nor-gpt.img.gz
 	IMAGE/emmc-atf-gpt.gz := lan969x-gpt-emmc |\
 		pad-to 1M | lan969x-fip ev23x71a |\
 		pad-to 9M | lan969x-fip ev23x71a |\
@@ -53,6 +61,9 @@ define Device/microchip_ev23x71a
 		pad-to 9M | lan969x-fip ev23x71a |\
 		pad-to 19M | append-kernel-part |\
 		append-rootfs |\
+		gzip
+	IMAGE/nor-gpt.img.gz := lan969x-gpt-nor |\
+		pad-to 512k | lan969x-fip ev23x71a |\
 		gzip
 endef
 TARGET_DEVICES += microchip_ev23x71a
