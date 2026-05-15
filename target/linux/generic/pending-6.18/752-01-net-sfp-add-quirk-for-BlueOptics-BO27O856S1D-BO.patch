@@ -1,0 +1,45 @@
+From 826a0536329fc8c6929fb83c9a619af004baf768 Mon Sep 17 00:00:00 2001
+From: Robert Marko <robert.marko@sartura.hr>
+Date: Fri, 15 May 2026 11:14:11 +0200
+Subject: [PATCH 1/2] net: sfp: add quirk for BlueOptics BO27O856S1D-BO
+
+BlueOptics BO27O856S1D-BO is a dual rate 10G/25G-SR SFP28 module, however
+the 10G mode is not being advertised so on SFP+ 10G port one will get:
+unsupported SFP module: no common interface modes
+
+So, add a new "sfp_quirk_10g_25g_sr" that will set the required 10G support
+bits.
+
+Signed-off-by: Robert Marko <robert.marko@sartura.hr>
+---
+ drivers/net/phy/sfp.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+--- a/drivers/net/phy/sfp.c
++++ b/drivers/net/phy/sfp.c
+@@ -511,6 +511,14 @@ static void sfp_quirk_ubnt_uf_instant(co
+ 	__set_bit(PHY_INTERFACE_MODE_1000BASEX, caps->interfaces);
+ }
+ 
++static void sfp_quirk_10g_25g_sr(const struct sfp_eeprom_id *id,
++				 struct sfp_module_caps *caps)
++{
++	linkmode_set_bit(ETHTOOL_LINK_MODE_10000baseSR_Full_BIT,
++			 caps->link_modes);
++	__set_bit(PHY_INTERFACE_MODE_10GBASER, caps->interfaces);
++}
++
+ #define SFP_QUIRK(_v, _p, _s, _f) \
+ 	{ .vendor = _v, .part = _p, .support = _s, .fixup = _f, }
+ #define SFP_QUIRK_S(_v, _p, _s) SFP_QUIRK(_v, _p, _s, NULL)
+@@ -529,6 +537,10 @@ static const struct sfp_quirk sfp_quirks
+ 
+ 	SFP_QUIRK_F("BIDB", "X-ONU-SFPP", sfp_fixup_potron),
+ 
++	// BlueOptics BO27O856S1D-BO is dual rate 25G/10G but the 10G rate is
++	// not advertised in EEPROM.
++	SFP_QUIRK_S("BlueOptics", "BO27O856S1D-BO", sfp_quirk_10g_25g_sr),
++
+ 	// FLYPRO SFP-10GT-CS-30M uses Rollball protocol to talk to the PHY.
+ 	SFP_QUIRK_F("FLYPRO", "SFP-10GT-CS-30M", sfp_fixup_rollball),
+ 
