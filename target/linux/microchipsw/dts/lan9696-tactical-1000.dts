@@ -98,6 +98,468 @@
 
 		i2c_poe: i2c@7 {
 			reg = <0x7>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			ethernet-pse@2c {
+				compatible = "microchip,pd77010";
+				reg = <0x2c>;
+				disable-ports-gpios = <&sgpio_out 0 0 GPIO_ACTIVE_LOW>;
+
+				managers {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					pd7718t3_0: manager@0 {
+						reg = <0>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+
+						phys0: port@0 {
+							reg = <0>;
+						};
+
+						phys1: port@1 {
+							reg = <1>;
+						};
+
+						phys2: port@2 {
+							reg = <2>;
+						};
+
+						phys3: port@3 {
+							reg = <3>;
+						};
+
+						phys4: port@4 {
+							reg = <4>;
+						};
+
+						phys5: port@5 {
+							reg = <5>;
+						};
+
+						phys6: port@6 {
+							reg = <6>;
+						};
+
+						phys7: port@7 {
+							reg = <7>;
+						};
+					};
+
+					pd7718t3_1: manager@1 {
+						reg = <1>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+
+						phys8: port@0 {
+							reg = <0>;
+						};
+
+						phys9: port@1 {
+							reg = <1>;
+						};
+
+						phys10: port@2 {
+							reg = <2>;
+						};
+
+						phys11: port@3 {
+							reg = <3>;
+						};
+
+						phys12: port@4 {
+							reg = <4>;
+						};
+
+						phys13: port@5 {
+							reg = <5>;
+						};
+
+						phys14: port@6 {
+							reg = <6>;
+						};
+
+						phys15: port@7 {
+							reg = <7>;
+						};
+					};
+
+					pd7718t3_2: manager@2 {
+						reg = <2>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+
+						phys16: port@0 {
+							reg = <0>;
+						};
+
+						phys17: port@1 {
+							reg = <1>;
+						};
+
+						phys18: port@2 {
+							reg = <2>;
+						};
+
+						phys19: port@3 {
+							reg = <3>;
+						};
+
+						phys20: port@4 {
+							reg = <4>;
+						};
+
+						phys21: port@5 {
+							reg = <5>;
+						};
+
+						phys22: port@6 {
+							reg = <6>;
+						};
+
+						phys23: port@7 {
+							reg = <7>;
+						};
+					};
+
+					pd7718t3_3: manager@3 {
+						reg = <3>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+
+						phys24: port@0 {
+							reg = <0>;
+						};
+
+						phys25: port@1 {
+							reg = <1>;
+						};
+
+						phys26: port@2 {
+							reg = <2>;
+						};
+
+						phys27: port@3 {
+							reg = <3>;
+						};
+
+						phys28: port@4 {
+							reg = <4>;
+						};
+
+						phys29: port@5 {
+							reg = <5>;
+						};
+
+						phys30: port@6 {
+							reg = <6>;
+						};
+
+						phys31: port@7 {
+							reg = <7>;
+						};
+					};
+
+					pd7718t3_4: manager@4 {
+						reg = <4>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+
+						phys32: port@0 {
+							reg = <0>;
+						};
+
+						phys33: port@1 {
+							reg = <1>;
+						};
+
+						phys34: port@2 {
+							reg = <2>;
+						};
+
+						phys35: port@3 {
+							reg = <3>;
+						};
+
+						phys36: port@4 {
+							reg = <4>;
+						};
+
+						phys37: port@5 {
+							reg = <5>;
+						};
+
+						phys38: port@6 {
+							reg = <6>;
+						};
+
+						phys39: port@7 {
+							reg = <7>;
+						};
+					};
+
+					pd7718t3_5: manager@5 {
+						reg = <5>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+
+						phys40: port@0 {
+							reg = <0>;
+						};
+
+						phys41: port@1 {
+							reg = <1>;
+						};
+
+						phys42: port@2 {
+							reg = <2>;
+						};
+
+						phys43: port@3 {
+							reg = <3>;
+						};
+
+						phys44: port@4 {
+							reg = <4>;
+						};
+
+						phys45: port@5 {
+							reg = <5>;
+						};
+
+						phys46: port@6 {
+							reg = <6>;
+						};
+
+						phys47: port@7 {
+							reg = <7>;
+						};
+					};
+				};
+
+				pse-pis {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					pse_pi0: pse-pi@0 {
+						reg = <0>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys0>, <&phys1>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_0>;
+					};
+
+					pse_pi1: pse-pi@1 {
+						reg = <1>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys3>, <&phys2>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_0>;
+					};
+
+					pse_pi2: pse-pi@2 {
+						reg = <2>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys4>, <&phys5>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_0>;
+					};
+
+					pse_pi3: pse-pi@3 {
+						reg = <3>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys7>, <&phys6>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_0>;
+					};
+
+					pse_pi4: pse-pi@4 {
+						reg = <4>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys8>, <&phys9>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_1>;
+					};
+
+					pse_pi5: pse-pi@5 {
+						reg = <5>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys11>, <&phys10>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_1>;
+					};
+
+					pse_pi6: pse-pi@6 {
+						reg = <6>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys12>, <&phys13>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_1>;
+					};
+
+					pse_pi7: pse-pi@7 {
+						reg = <7>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys15>, <&phys14>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_1>;
+					};
+
+					pse_pi8: pse-pi@8 {
+						reg = <8>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys16>, <&phys17>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_2>;
+					};
+
+					pse_pi9: pse-pi@9 {
+						reg = <9>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys19>, <&phys18>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_2>;
+					};
+
+					pse_pi10: pse-pi@10 {
+						reg = <10>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys20>, <&phys21>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_2>;
+					};
+
+					pse_pi11: pse-pi@11 {
+						reg = <11>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys23>, <&phys22>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_2>;
+					};
+
+					pse_pi12: pse-pi@12 {
+						reg = <12>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys24>, <&phys25>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_3>;
+					};
+
+					pse_pi13: pse-pi@13 {
+						reg = <13>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys27>, <&phys26>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_3>;
+					};
+
+					pse_pi14: pse-pi@14 {
+						reg = <14>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys28>, <&phys29>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_3>;
+					};
+
+					pse_pi15: pse-pi@15 {
+						reg = <15>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys31>, <&phys30>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_3>;
+					};
+
+					pse_pi16: pse-pi@16 {
+						reg = <16>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys32>, <&phys33>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_4>;
+					};
+
+					pse_pi17: pse-pi@17 {
+						reg = <17>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys35>, <&phys34>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_4>;
+					};
+
+					pse_pi18: pse-pi@18 {
+						reg = <18>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys36>, <&phys37>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_4>;
+					};
+
+					pse_pi19: pse-pi@19 {
+						reg = <19>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys39>, <&phys38>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_4>;
+					};
+
+					pse_pi20: pse-pi@20 {
+						reg = <20>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys40>, <&phys41>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_5>;
+					};
+
+					pse_pi21: pse-pi@21 {
+						reg = <21>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys43>, <&phys42>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_5>;
+					};
+
+					pse_pi22: pse-pi@22 {
+						reg = <22>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys44>, <&phys45>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_5>;
+					};
+
+					pse_pi23: pse-pi@23 {
+						reg = <23>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&phys47>, <&phys46>;
+						polarity-supported = "MDI-X", "S";
+						vpwr-supply = <&pd7718t3_5>;
+					};
+				};
+			};
 		};
 	};
 
@@ -507,6 +969,7 @@
 		reg = <24>;
 		interrupts = <11 IRQ_TYPE_LEVEL_LOW>;
 		interrupt-parent = <&gpio>;
+		pses = <&pse_pi2>;
 	};
 
 	phy25: phy@25 {
