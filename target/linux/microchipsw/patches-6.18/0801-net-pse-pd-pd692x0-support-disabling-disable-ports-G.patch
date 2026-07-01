@@ -1,0 +1,48 @@
+From 4b1ad65596502e725c4803168e1e75d6febc7af6 Mon Sep 17 00:00:00 2001
+From: Robert Marko <robert.marko@sartura.hr>
+Date: Wed, 6 May 2026 12:56:28 +0200
+Subject: [PATCH 801/808] net: pse-pd: pd692x0: support disabling disable ports
+ GPIO
+
+Microchip PSE controllers have a dedicated disable ports input that like it
+name says disables PoE on all ports.
+
+So lets support parsing that GPIO and using the GPIO flags to set it low
+by default and enable PoE on all ports during probe.
+
+Acked-by: Oleksij Rempel <o.rempel@pengutronix.de>
+Signed-off-by: Robert Marko <robert.marko@sartura.hr>
+---
+ drivers/net/pse-pd/pd692x0.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+--- a/drivers/net/pse-pd/pd692x0.c
++++ b/drivers/net/pse-pd/pd692x0.c
+@@ -7,6 +7,7 @@
+ 
+ #include <linux/delay.h>
+ #include <linux/firmware.h>
++#include <linux/gpio/consumer.h>
+ #include <linux/i2c.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+@@ -1758,6 +1759,7 @@ static int pd692x0_i2c_probe(struct i2c_
+ 	static const char * const regulators[] = { "vdd", "vdda" };
+ 	struct pd692x0_msg msg, buf = {0}, zero = {0};
+ 	struct device *dev = &client->dev;
++	struct gpio_desc *disable_ports;
+ 	struct pd692x0_msg_ver ver;
+ 	struct pd692x0_priv *priv;
+ 	struct fw_upload *fwl;
+@@ -1781,6 +1783,11 @@ static int pd692x0_i2c_probe(struct i2c_
+ 	priv->client = client;
+ 	i2c_set_clientdata(client, priv);
+ 
++	disable_ports = devm_gpiod_get_optional(dev, "disable-ports", GPIOD_OUT_LOW);
++	if (IS_ERR(disable_ports))
++		return dev_err_probe(&client->dev, PTR_ERR(disable_ports),
++				     "Failed to get disable ports GPIO\n");
++
+ 	ret = i2c_master_recv(client, (u8 *)&buf, sizeof(buf));
+ 	if (ret != sizeof(buf)) {
+ 		dev_err(dev, "Failed to get device status\n");

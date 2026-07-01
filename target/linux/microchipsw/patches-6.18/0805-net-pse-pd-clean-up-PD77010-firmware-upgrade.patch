@@ -1,0 +1,317 @@
+From 135a018a3e57ecbe9c051bd03668a591a5c43dbb Mon Sep 17 00:00:00 2001
+From: Robert Marko <robert.marko@sartura.hr>
+Date: Sun, 17 May 2026 12:38:42 +0200
+Subject: [PATCH 805/808] net: pse-pd: clean up PD77010 firmware upgrade
+
+Name the PD77010 firmware download constants and split the
+BOOT-mode helpers out of the write loop.
+
+Use hex2bin() for Intel HEX records, validate BOOT report replies in
+a single helper, and share reset telemetry handling between prepare,
+completion, and cleanup.
+
+The reset telemetry helper polls for the documented BOOT wake delay
+instead of relying on one fixed 30 ms read.
+
+Signed-off-by: Robert Marko <robert.marko@sartura.hr>
+---
+ drivers/net/pse-pd/pd692x0.c | 225 +++++++++++++++++++++++++----------
+ 1 file changed, 160 insertions(+), 65 deletions(-)
+
+--- a/drivers/net/pse-pd/pd692x0.c
++++ b/drivers/net/pse-pd/pd692x0.c
+@@ -36,10 +36,28 @@
+ #define PD77010_FW_MIN_VER	5
+ #define PD77010_FW_PATCH_VER	0
+ 
+-/* PD77010 boot error codes reported in the Err Code field of the boot telemetry */
++/* PD77010 CPU Status1 values reported by reset telemetry/system status */
++#define PD77010_CPU_STATUS_APP		0x00
++#define PD77010_CPU_STATUS_BOOT		0x01
++
++/* PD77010 boot error codes reported in Boot Get System Status */
+ #define PD77010_BOOT_ERR_ERASE		0x05 /* erasing in progress */
+ #define PD77010_BOOT_ERR_DOWNLOAD	0x06 /* erase done, ready for programming */
+ 
++#define PD77010_IHEX_BYTE_CNT_OFF	1
++#define PD77010_IHEX_REC_TYPE_OFF	7
++#define PD77010_IHEX_DATA_OFF		9
++#define PD77010_IHEX_DATA_REC_LEN	0x20
++#define PD77010_IHEX_DATA_REC		0x00
++#define PD77010_IHEX_EOF_REC		0x01
++
++#define PD77010_NVM_DATA_PER_CMD	8
++#define PD77010_NVM_CMDS_PER_LINE	(PD77010_IHEX_DATA_REC_LEN / \
++					 PD77010_NVM_DATA_PER_CMD)
++#define PD77010_NVM_CMDS_PER_PAGE	8
++
++#define PD77010_RESET_TLM_TIMEOUT_MS	2500
++
+ #define PD692X0_USER_BYTE	42
+ 
+ enum pd692x0_fw_state {
+@@ -1837,6 +1855,108 @@ static int pd77010_fw_recv_resp(const st
+ 	return -ETIMEDOUT;
+ }
+ 
++static int pd77010_fw_sendrecv_fast(struct pd692x0_priv *priv,
++				    struct pd692x0_msg *msg,
++				    struct pd692x0_msg *buf)
++{
++	const struct i2c_client *client = priv->client;
++	int ret;
++
++	ret = pd692x0_send_msg(priv, msg);
++	if (ret)
++		return ret;
++
++	ret = pd77010_fw_recv_resp(client, buf);
++	if (ret)
++		return ret;
++
++	if (buf->echo != msg->echo)
++		return -EIO;
++
++	if (buf->key != PD692X0_KEY_REPORT || buf->sub[0] || buf->sub[1])
++		return -EIO;
++
++	return 0;
++}
++
++static enum fw_upload_err
++pd77010_fw_read_reset_tlm(const struct i2c_client *client,
++			  u8 expected_cpu_status)
++{
++	struct pd692x0_msg buf = {0};
++	unsigned long timeout;
++	int ret;
++	int last_ret = 0;
++
++	timeout = msecs_to_jiffies(PD77010_RESET_TLM_TIMEOUT_MS) + jiffies;
++	do {
++		msleep(30);
++
++		ret = i2c_master_recv(client, (u8 *)&buf, sizeof(buf));
++		last_ret = ret;
++		if (ret == sizeof(buf) && buf.key)
++			break;
++	} while (time_is_after_jiffies(timeout));
++
++	if (last_ret < 0)
++		return FW_UPLOAD_ERR_RW_ERROR;
++
++	if (buf.key != PD692X0_KEY_TLM || buf.echo != 0xff ||
++	    buf.sub[0] != expected_cpu_status)
++		return FW_UPLOAD_ERR_HW_ERROR;
++
++	return FW_UPLOAD_ERR_NONE;
++}
++
++static int pd77010_fw_ihex_record_type(const char *line)
++{
++	u8 rec_type;
++	int ret;
++
++	if (line[0] != ':')
++		return -EINVAL;
++
++	ret = hex2bin(&rec_type, line + PD77010_IHEX_REC_TYPE_OFF, 1);
++	if (ret)
++		return ret;
++
++	return rec_type;
++}
++
++static int pd77010_fw_ihex_byte_count(const char *line)
++{
++	u8 byte_count;
++	int ret;
++
++	ret = hex2bin(&byte_count, line + PD77010_IHEX_BYTE_CNT_OFF, 1);
++	if (ret)
++		return ret;
++
++	return byte_count;
++}
++
++static int pd77010_fw_ihex_data(const char *line, u8 *data)
++{
++	return hex2bin(data, line + PD77010_IHEX_DATA_OFF,
++		       PD77010_IHEX_DATA_REC_LEN);
++}
++
++static int pd77010_fw_program_data(struct pd692x0_priv *priv,
++				   const u8 *data)
++{
++	struct pd692x0_msg msg, buf;
++	int ret;
++
++	msg = pd77010_msg_template_list[PD77010_NVM_DOWNLOAD_PROGRAM];
++	memcpy(msg.data, data, PD77010_NVM_DATA_PER_CMD);
++
++	ret = pd77010_fw_sendrecv_fast(priv, &msg, &buf);
++	if (ret)
++		dev_err(&priv->client->dev, "NVM program command failed\n");
++
++	return ret;
++}
++
+ /*
+  * PD77010 firmware download uses the standard 15-byte I2C protocol throughout
+  * (no ASCII programming mode). The firmware file is in Intel HEX format;
+@@ -1874,20 +1994,12 @@ static enum fw_upload_err pd77010_fw_pre
+ 			goto err_out;
+ 		}
+ 
+-		/*
+-		 * The device resets after the Report ACK is read. Wait for
+-		 * the boot to start and read the 15-byte reset telemetry to
+-		 * clear the I2C buffer.
+-		 */
+-		msleep(30);
+-		memset(&buf, 0, sizeof(buf));
+-		ret = i2c_master_recv(client, (u8 *)&buf, sizeof(buf));
+-		if (ret != sizeof(buf) ||
+-		    buf.key != PD692X0_KEY_TLM || buf.echo != 0xff ||
+-		    buf.sub[0] != 0x01) {
++		/* The reset telemetry also clears the I2C buffer. */
++		ret = pd77010_fw_read_reset_tlm(client,
++						PD77010_CPU_STATUS_BOOT);
++		if (ret) {
+ 			dev_err(&client->dev,
+ 				"PD77010 did not enter BOOT mode\n");
+-			ret = FW_UPLOAD_ERR_HW_ERROR;
+ 			goto err_out;
+ 		}
+ 	}
+@@ -1960,13 +2072,14 @@ static enum fw_upload_err pd77010_fw_wri
+ 	struct pd692x0_priv *priv = fwl->dd_handle;
+ 	const struct i2c_client *client = priv->client;
+ 	char line[PD692X0_FW_LINE_MAX_SZ];
+-	struct pd692x0_msg msg, buf;
+-	int line_len, prog_cnt;
+-	int chunk, b, i, ret;
+-	int off;
++	u8 record_data[PD77010_IHEX_DATA_REC_LEN];
++	int line_len, prog_cmds;
++	int chunk, i, ret;
++	int record_type;
++	int byte_count;
+ 
+ 	priv->fw_state = PD692X0_FW_WRITE;
+-	prog_cnt = 0;
++	prog_cmds = 0;
+ 	i = 0;
+ 
+ 	while (i < size) {
+@@ -1981,49 +2094,40 @@ static enum fw_upload_err pd77010_fw_wri
+ 		if (line[0] != ':')
+ 			continue;
+ 
+-		/* EOF record (type 0x01) - done */
+-		if (line[7] == '0' && line[8] == '1')
++		record_type = pd77010_fw_ihex_record_type(line);
++		if (record_type < 0)
++			return FW_UPLOAD_ERR_FW_INVALID;
++
++		if (record_type == PD77010_IHEX_EOF_REC)
+ 			break;
+ 
+-		/* Only :20 records carry 32 bytes of application data */
+-		if (line[1] != '2' || line[2] != '0')
++		/* Only :20 data records carry application data. */
++		if (record_type != PD77010_IHEX_DATA_REC)
+ 			continue;
+ 
+-		/*
+-		 * Send the 32 data bytes as four NVM program commands of
+-		 * 8 bytes each. Data starts at line[9] (after :20AAAA00).
+-		 * Use direct i2c_master_send/recv to avoid the 30 ms
+-		 * readback delay of pd692x0_sendrecv_msg (15360 program
+-		 * commands × 30 ms = ~460 s would be unacceptably slow).
+-		 */
+-		for (chunk = 0; chunk < 4; chunk++) {
+-			msg = pd77010_msg_template_list[PD77010_NVM_DOWNLOAD_PROGRAM];
+-			for (b = 0; b < 8; b++) {
+-				off = 9 + chunk * 16 + b * 2;
+-				msg.data[b] =
+-					(hex_to_bin((u8)line[off]) << 4) |
+-					hex_to_bin((u8)line[off + 1]);
+-			}
++		byte_count = pd77010_fw_ihex_byte_count(line);
++		if (byte_count < 0)
++			return FW_UPLOAD_ERR_FW_INVALID;
+ 
+-			priv->msg_id = pd692x0_build_msg(&msg, priv->msg_id);
+-			ret = i2c_master_send(client, (u8 *)&msg, sizeof(msg));
+-			if (ret != sizeof(msg))
+-				return FW_UPLOAD_ERR_RW_ERROR;
++		if (byte_count != PD77010_IHEX_DATA_REC_LEN)
++			continue;
++
++		ret = pd77010_fw_ihex_data(line, record_data);
++		if (ret)
++			return FW_UPLOAD_ERR_FW_INVALID;
+ 
+-			ret = pd77010_fw_recv_resp(client, &buf);
+-			if (ret < 0 || buf.key != PD692X0_KEY_REPORT ||
+-			    buf.echo != msg.echo ||
+-			    buf.sub[0] || buf.sub[1]) {
+-				dev_err(&client->dev,
+-					"NVM program command failed\n");
++		for (chunk = 0; chunk < PD77010_NVM_CMDS_PER_LINE; chunk++) {
++			ret = pd77010_fw_program_data(priv,
++						      record_data + chunk *
++						      PD77010_NVM_DATA_PER_CMD);
++			if (ret)
+ 				return FW_UPLOAD_ERR_RW_ERROR;
+-			}
+ 
+ 			/*
+ 			 * After every 8 commands (one 64-byte NVM page) the
+ 			 * controller needs 2 ms to program the page to NVM.
+ 			 */
+-			if (!(++prog_cnt % 8))
++			if (!(++prog_cmds % PD77010_NVM_CMDS_PER_PAGE))
+ 				usleep_range(2000, 3000);
+ 		}
+ 
+@@ -2056,22 +2160,14 @@ static enum fw_upload_err pd77010_fw_pol
+ 		return FW_UPLOAD_ERR_RW_ERROR;
+ 	}
+ 
+-	/* Read the 15-byte reset telemetry to clear the I2C buffer */
+-	msleep(30);
+-	memset(&buf, 0, sizeof(buf));
+-	ret = i2c_master_recv(client, (u8 *)&buf, sizeof(buf));
+-	if (ret != sizeof(buf)) {
+-		priv->fw_state = PD692X0_FW_BROKEN;
+-		return FW_UPLOAD_ERR_RW_ERROR;
+-	}
+-
+-	/* CPU Status1 = 0x00 means Application mode is active */
+-	if (buf.key != PD692X0_KEY_TLM || buf.echo != 0xff ||
+-	    buf.sub[0] != 0x00) {
++	/* The reset telemetry also clears the I2C buffer. */
++	ret = pd77010_fw_read_reset_tlm(client, PD77010_CPU_STATUS_APP);
++	if (ret) {
+ 		dev_err(&client->dev,
+ 			"PD77010 failed to enter Application mode\n");
+-		priv->fw_state = PD692X0_FW_NEED_UPDATE;
+-		return FW_UPLOAD_ERR_HW_ERROR;
++		priv->fw_state = ret == FW_UPLOAD_ERR_RW_ERROR ?
++				 PD692X0_FW_BROKEN : PD692X0_FW_NEED_UPDATE;
++		return ret;
+ 	}
+ 
+ 	ver = pd692x0_get_sw_version(priv);
+@@ -2115,8 +2211,7 @@ static void pd77010_fw_cleanup(struct fw
+ 		 */
+ 		msg = pd692x0_msg_template_list[PD692X0_MSG_DOWNLOAD_CMD];
+ 		pd692x0_sendrecv_msg(priv, &msg, &buf);
+-		msleep(30);
+-		i2c_master_recv(priv->client, (u8 *)&buf, sizeof(buf));
++		pd77010_fw_read_reset_tlm(priv->client, PD77010_CPU_STATUS_BOOT);
+ 		fallthrough;
+ 	case PD692X0_FW_COMPLETE:
+ 		priv->fw_state = PD692X0_FW_BROKEN;

@@ -1,0 +1,117 @@
+From 548891abd5528395c8019346c2c881bd2b6bf49e Mon Sep 17 00:00:00 2001
+From: Robert Marko <robert.marko@sartura.hr>
+Date: Sun, 17 May 2026 12:59:53 +0200
+Subject: [PATCH 807/808] net: pse-pd: use PD77010 port parameter layout
+
+PD77010 keeps the Set BT Port Parameters framing but differs from
+PD692x0 in the payload layout.
+
+The old PD692x0 added-class-power byte is an N field on PD77010.
+Priority and CFG3 should default to no-change when callers are only
+toggling another field.
+
+Add a generation-adjusted message template for Set BT Port Parameters
+and avoid writing the PD692x0 added-power byte when programming Gen7
+power limits.
+
+Signed-off-by: Robert Marko <robert.marko@sartura.hr>
+---
+ drivers/net/pse-pd/pd692x0.c | 37 +++++++++++++++++++++++++++++-------
+ 1 file changed, 30 insertions(+), 7 deletions(-)
+
+--- a/drivers/net/pse-pd/pd692x0.c
++++ b/drivers/net/pse-pd/pd692x0.c
+@@ -459,6 +459,21 @@ static struct pd692x0_priv *to_pd692x0_p
+ 	return container_of(pcdev, struct pd692x0_priv, pcdev);
+ }
+ 
++static struct pd692x0_msg
++pd692x0_msg_template(struct pd692x0_priv *priv, int id)
++{
++	struct pd692x0_msg msg = pd692x0_msg_template_list[id];
++
++	if (id == PD692X0_MSG_SET_PORT_PARAM &&
++	    priv->info->pse_generation == PSE_GEN_7) {
++		msg.data[3] = 0x4e;
++		msg.data[4] = 0xff;
++		msg.data[5] = 0xff;
++	}
++
++	return msg;
++}
++
+ static int pd692x0_fw_unavailable(struct pd692x0_priv *priv)
+ {
+ 	switch (priv->fw_state) {
+@@ -491,7 +506,7 @@ static int pd692x0_pi_enable(struct pse_
+ 	if (priv->admin_state[id] == ETHTOOL_C33_PSE_ADMIN_STATE_ENABLED)
+ 		return 0;
+ 
+-	msg = pd692x0_msg_template_list[PD692X0_MSG_SET_PORT_PARAM];
++	msg = pd692x0_msg_template(priv, PD692X0_MSG_SET_PORT_PARAM);
+ 	msg.data[0] = 0x1;
+ 	msg.sub[2] = id;
+ 	ret = pd692x0_sendrecv_msg(priv, &msg, &buf);
+@@ -516,7 +531,7 @@ static int pd692x0_pi_disable(struct pse
+ 	if (priv->admin_state[id] == ETHTOOL_C33_PSE_ADMIN_STATE_DISABLED)
+ 		return 0;
+ 
+-	msg = pd692x0_msg_template_list[PD692X0_MSG_SET_PORT_PARAM];
++	msg = pd692x0_msg_template(priv, PD692X0_MSG_SET_PORT_PARAM);
+ 	msg.data[0] = 0x0;
+ 	msg.sub[2] = id;
+ 	ret = pd692x0_sendrecv_msg(priv, &msg, &buf);
+@@ -657,7 +672,8 @@ static int pd692x0_pi_get_pw_from_table(
+ }
+ 
+ static int pd692x0_pi_set_pw_from_table(struct device *dev,
+-					struct pd692x0_msg *msg, int pw)
++					struct pd692x0_msg *msg, int pw,
++					bool exact)
+ {
+ 	const struct pd692x0_class_pw *pw_table;
+ 	int i;
+@@ -673,6 +689,11 @@ static int pd692x0_pi_set_pw_from_table(
+ 	}
+ 
+ 	for (i = 0; i < PD692X0_CLASS_PW_TABLE_SIZE; i++, pw_table++) {
++		if (exact && pw <= pw_table->class_pw) {
++			msg->data[2] = pw_table->class_cfg_value;
++			return 0;
++		}
++
+ 		if (pw > (pw_table->class_pw + pw_table->max_added_class_pw))
+ 			continue;
+ 
+@@ -697,7 +718,8 @@ static int pd692x0_pi_set_pw_from_table(
+ 		 "Power limit %dmW not supported. Set to highest power limit %dmW\n",
+ 		 pw, pw_table->class_pw + pw_table->max_added_class_pw);
+ 	msg->data[2] = pw_table->class_cfg_value;
+-	msg->data[3] = pw_table->max_added_class_pw / 100;
++	if (!exact)
++		msg->data[3] = pw_table->max_added_class_pw / 100;
+ 	return 0;
+ }
+ 
+@@ -1470,9 +1492,10 @@ static int pd692x0_pi_set_pw_limit(struc
+ 	if (ret)
+ 		return ret;
+ 
+-	msg = pd692x0_msg_template_list[PD692X0_MSG_SET_PORT_PARAM];
++	msg = pd692x0_msg_template(priv, PD692X0_MSG_SET_PORT_PARAM);
+ 	msg.sub[2] = id;
+-	ret = pd692x0_pi_set_pw_from_table(dev, &msg, max_mW);
++	ret = pd692x0_pi_set_pw_from_table(dev, &msg, max_mW,
++					   priv->info->pse_generation == PSE_GEN_7);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -1490,7 +1513,7 @@ static int pd692x0_pi_set_prio(struct ps
+ 	if (ret)
+ 		return ret;
+ 
+-	msg = pd692x0_msg_template_list[PD692X0_MSG_SET_PORT_PARAM];
++	msg = pd692x0_msg_template(priv, PD692X0_MSG_SET_PORT_PARAM);
+ 	msg.sub[2] = id;
+ 	/* Controller priority from 1 to 3 */
+ 	msg.data[4] = prio + 1;

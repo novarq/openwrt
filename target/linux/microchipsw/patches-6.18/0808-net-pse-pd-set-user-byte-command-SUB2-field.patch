@@ -1,0 +1,29 @@
+From fb9d1c80003a12c388275fa7dd381568733ba873 Mon Sep 17 00:00:00 2001
+From: Robert Marko <robert.marko@sartura.hr>
+Date: Sun, 17 May 2026 13:30:20 +0200
+Subject: [PATCH 808/808] net: pse-pd: set user byte command SUB2 field
+
+The Set User Byte to Save command has three subject bytes. Both the
+PD692x0 and PD77010 protocol guides define SUB2 as an N field with value
+0x4e, while SUB1 carries the NVM user byte.
+
+The template only initialized SUB and SUB1, leaving SUB2 zero-filled by C
+initialization. Fill SUB2 explicitly so the command matches the documented
+layout.
+
+Signed-off-by: Robert Marko <robert.marko@sartura.hr>
+---
+ drivers/net/pse-pd/pd692x0.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/drivers/net/pse-pd/pd692x0.c
++++ b/drivers/net/pse-pd/pd692x0.c
+@@ -250,7 +250,7 @@ static const struct pd692x0_msg pd692x0_
+ 	},
+ 	[PD692X0_MSG_SET_USER_BYTE] = {
+ 		.key = PD692X0_KEY_PRG,
+-		.sub = {0x41, PD692X0_USER_BYTE},
++		.sub = {0x41, PD692X0_USER_BYTE, 0x4e},
+ 		.data = {0x4e, 0x4e, 0x4e, 0x4e,
+ 			 0x4e, 0x4e, 0x4e, 0x4e},
+ 	},

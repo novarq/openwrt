@@ -1,0 +1,44 @@
+From f186a3ae90611ab048f4093ab69420532d8a34e4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Uwe=20Kleine-K=C3=B6nig=20=28The=20Capable=20Hub=29?=
+ <u.kleine-koenig@baylibre.com>
+Date: Tue, 19 May 2026 16:01:01 +0200
+Subject: [PATCH] net: pse-pd: Use named initializers for arrays of
+ i2c_device_data
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+While being less compact, using named initializers allows to more easily
+see which members of the structs are assigned which value without having
+to lookup the declaration of the struct. And it's also more robust
+against changes to the struct definition.
+
+The mentioned robustness is relevant for a planned change to struct
+i2c_device_id that replaces .driver_data by an anonymous union.
+
+While touching all these arrays, unify usage of whitespace in the list
+terminator.
+
+This patch doesn't modify the compiled arrays, only their representation
+in source form benefits. The former was confirmed with x86 and arm64
+builds.
+
+Signed-off-by: Uwe Kleine-König (The Capable Hub) <u.kleine-koenig@baylibre.com>
+Acked-by: Oleksij Rempel <o.rempel@pengutronix.de>
+Link: https://patch.msgid.link/20260519140101.1584946-2-u.kleine-koenig@baylibre.com
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+---
+ drivers/net/pse-pd/pd692x0.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/drivers/net/pse-pd/pd692x0.c
++++ b/drivers/net/pse-pd/pd692x0.c
+@@ -1854,7 +1854,7 @@ static void pd692x0_i2c_remove(struct i2
+ }
+ 
+ static const struct i2c_device_id pd692x0_id[] = {
+-	{ PD692X0_PSE_NAME },
++	{ .name = PD692X0_PSE_NAME },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(i2c, pd692x0_id);

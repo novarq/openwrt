@@ -1,0 +1,461 @@
+From 0114d5b46576dc6dd6cb446d3125b822d5047fd6 Mon Sep 17 00:00:00 2001
+From: Robert Marko <robert.marko@sartura.hr>
+Date: Tue, 5 May 2026 16:08:08 +0200
+Subject: [PATCH 804/808] net: pse-pd: pd692x0: add PD77010 support
+
+PD77010 is a Gen7 Microchip PSE controller designed for 802.3bt support.
+
+Firmware format and upgrade flow is completely different, so dedicated Gen7
+firmware handler is added.
+
+Signed-off-by: Robert Marko <robert.marko@sartura.hr>
+---
+ drivers/net/pse-pd/pd692x0.c | 382 ++++++++++++++++++++++++++++++++++-
+ 1 file changed, 375 insertions(+), 7 deletions(-)
+
+--- a/drivers/net/pse-pd/pd692x0.c
++++ b/drivers/net/pse-pd/pd692x0.c
+@@ -7,6 +7,7 @@
+ 
+ #include <linux/delay.h>
+ #include <linux/firmware.h>
++#include <linux/hex.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/i2c.h>
+ #include <linux/module.h>
+@@ -31,6 +32,14 @@
+ #define PD692X0_FW_MIN_VER	5
+ #define PD692X0_FW_PATCH_VER	5
+ 
++#define PD77010_FW_MAJ_VER	1
++#define PD77010_FW_MIN_VER	5
++#define PD77010_FW_PATCH_VER	0
++
++/* PD77010 boot error codes reported in the Err Code field of the boot telemetry */
++#define PD77010_BOOT_ERR_ERASE		0x05 /* erasing in progress */
++#define PD77010_BOOT_ERR_DOWNLOAD	0x06 /* erase done, ready for programming */
++
+ #define PD692X0_USER_BYTE	42
+ 
+ enum pd692x0_fw_state {
+@@ -89,13 +98,22 @@ enum {
+ 	PD692X0_MSG_CNT
+ };
+ 
++enum {
++	PD77010_NVM_DOWNLOAD_ERASE,
++	PD77010_NVM_DOWNLOAD_PROGRAM,
++
++	/* add new message above here */
++	PD77010_MSG_CNT
++};
++
+ struct pd692x0_matrix {
+ 	u8 hw_port_a;
+ 	u8 hw_port_b;
+ };
+ 
+ enum pse_generation {
+-	PSE_GEN_6
++	PSE_GEN_6,
++	PSE_GEN_7
+ };
+ 
+ struct pd692x0_info {
+@@ -220,6 +238,19 @@ static const struct pd692x0_msg pd692x0_
+ 	},
+ };
+ 
++static const struct pd692x0_msg pd77010_msg_template_list[PD77010_MSG_CNT] = {
++	[PD77010_NVM_DOWNLOAD_ERASE] = {
++		.key  = PD692X0_KEY_PRG,
++		.sub  = {0xff, 0x90, 0x02},
++		.data = {0x4e, 0x4e, 0x4e, 0x4e,
++			 0x4e, 0x4e, 0x4e, 0x4e},
++	},
++	[PD77010_NVM_DOWNLOAD_PROGRAM] = {
++		.key  = PD692X0_KEY_PRG,
++		.sub  = {0xff, 0x92, 0x92},
++	},
++};
++
+ static u8 pd692x0_build_msg(struct pd692x0_msg *msg, u8 echo)
+ {
+ 	u8 *data = (u8 *)msg;
+@@ -825,12 +856,22 @@ static struct pd692x0_msg_ver pd692x0_ge
+ 	}
+ 
+ 	/* Extract version from the message */
+-	ver.prod = buf.sub[2];
+-	ver.maj_sw_ver = (buf.data[0] << 8 | buf.data[1]) / 100;
+-	ver.min_sw_ver = ((buf.data[0] << 8 | buf.data[1]) / 10) % 10;
+-	ver.pa_sw_ver = (buf.data[0] << 8 | buf.data[1]) % 10;
+-	ver.param = buf.data[2];
+-	ver.build = buf.data[3];
++	if (priv->info->pse_generation == PSE_GEN_6) {
++		ver.prod = buf.sub[2];
++		ver.maj_sw_ver = (buf.data[0] << 8 | buf.data[1]) / 100;
++		ver.min_sw_ver = ((buf.data[0] << 8 | buf.data[1]) / 10) % 10;
++		ver.pa_sw_ver = (buf.data[0] << 8 | buf.data[1]) % 10;
++		ver.param = buf.data[2];
++		ver.build = buf.data[3];
++	} else {
++		ver.prod = buf.sub[2];
++		ver.maj_sw_ver = buf.data[0];
++		ver.min_sw_ver = buf.data[1];
++		ver.param = buf.data[2];
++		/* Unused on Gen 7 */
++		ver.pa_sw_ver = 0;
++		ver.build = 0;
++	}
+ 
+ 	return ver;
+ }
+@@ -1776,6 +1817,331 @@ static const struct pd692x0_info pd69200
+ 	.pd_fw_ops = &pd692x0_fw_ops,
+ };
+ 
++/*
++ * In BOOT mode the controller replies in < 30 us. Poll immediately with
++ * a short retry window rather than using the normal 30 ms readback delay.
++ */
++static int pd77010_fw_recv_resp(const struct i2c_client *client,
++				struct pd692x0_msg *buf)
++{
++	int ret, retries = 0;
++
++	do {
++		memset(buf, 0, sizeof(*buf));
++		ret = i2c_master_recv(client, (u8 *)buf, sizeof(*buf));
++		if (ret == sizeof(*buf) && buf->key)
++			return 0;
++		usleep_range(500, 1000);
++	} while (++retries < 10);
++
++	return -ETIMEDOUT;
++}
++
++/*
++ * PD77010 firmware download uses the standard 15-byte I2C protocol throughout
++ * (no ASCII programming mode). The firmware file is in Intel HEX format;
++ * only :20 data records (32 bytes each) are transmitted as 4 NVM program
++ * commands of 8 bytes each. After every 8 commands (one 64-byte NVM page)
++ * a 2 ms delay is required before the next page.
++ * See "PD77010-PD77020 Firmware Download and Replace Procedure" (DS50003836).
++ */
++static enum fw_upload_err pd77010_fw_prepare(struct fw_upload *fwl,
++					     const u8 *data, u32 size)
++{
++	struct pd692x0_priv *priv = fwl->dd_handle;
++	const struct i2c_client *client = priv->client;
++	enum pd692x0_fw_state last_fw_state;
++	struct pd692x0_msg msg, buf = {0};
++	unsigned long timeout;
++	int ret;
++
++	priv->cancel_request = false;
++	last_fw_state = priv->fw_state;
++	priv->fw_state = PD692X0_FW_PREPARE;
++
++	/*
++	 * If the firmware is not already broken (i.e. device is in application
++	 * mode) send Download Restart to switch to BOOT mode.
++	 */
++	if (last_fw_state != PD692X0_FW_BROKEN) {
++		msg = pd692x0_msg_template_list[PD692X0_MSG_DOWNLOAD_CMD];
++		ret = pd692x0_sendrecv_msg(priv, &msg, &buf);
++		if (ret < 0) {
++			dev_err(&client->dev,
++				"Failed to enter BOOT mode (%pe)\n",
++				ERR_PTR(ret));
++			ret = FW_UPLOAD_ERR_RW_ERROR;
++			goto err_out;
++		}
++
++		/*
++		 * The device resets after the Report ACK is read. Wait for
++		 * the boot to start and read the 15-byte reset telemetry to
++		 * clear the I2C buffer.
++		 */
++		msleep(30);
++		memset(&buf, 0, sizeof(buf));
++		ret = i2c_master_recv(client, (u8 *)&buf, sizeof(buf));
++		if (ret != sizeof(buf) ||
++		    buf.key != PD692X0_KEY_TLM || buf.echo != 0xff ||
++		    buf.sub[0] != 0x01) {
++			dev_err(&client->dev,
++				"PD77010 did not enter BOOT mode\n");
++			ret = FW_UPLOAD_ERR_HW_ERROR;
++			goto err_out;
++		}
++	}
++
++	if (priv->cancel_request) {
++		ret = FW_UPLOAD_ERR_CANCELED;
++		goto err_out;
++	}
++
++	/* Erase the NVM application area (takes up to 4 s) */
++	msg = pd77010_msg_template_list[PD77010_NVM_DOWNLOAD_ERASE];
++	ret = pd692x0_sendrecv_msg(priv, &msg, &buf);
++	if (ret < 0) {
++		dev_err(&client->dev, "Failed to send NVM erase (%pe)\n",
++			ERR_PTR(ret));
++		ret = FW_UPLOAD_ERR_RW_ERROR;
++		goto err_out;
++	}
++
++	msleep(4000);
++
++	/* Poll until erasing finishes (Err Code 0x06 = ready for download) */
++	msg = pd692x0_msg_template_list[PD692X0_MSG_GET_SYS_STATUS];
++	timeout = msecs_to_jiffies(4000) + jiffies;
++
++	while (true) {
++		if (time_is_before_jiffies(timeout)) {
++			dev_err(&client->dev,
++				"Timeout waiting for NVM erase\n");
++			ret = FW_UPLOAD_ERR_TIMEOUT;
++			goto err_out;
++		}
++
++		ret = pd692x0_sendrecv_msg(priv, &msg, &buf);
++		if (ret < 0) {
++			msleep(100);
++			continue;
++		}
++
++		if (buf.data[0] == PD77010_BOOT_ERR_DOWNLOAD)
++			break;
++
++		if (buf.data[0] != PD77010_BOOT_ERR_ERASE) {
++			dev_err(&client->dev,
++				"Unexpected boot error 0x%02x after erase\n",
++				buf.data[0]);
++			ret = FW_UPLOAD_ERR_HW_ERROR;
++			goto err_out;
++		}
++
++		if (priv->cancel_request) {
++			ret = FW_UPLOAD_ERR_CANCELED;
++			goto err_out;
++		}
++
++		msleep(100);
++	}
++
++	return FW_UPLOAD_ERR_NONE;
++
++err_out:
++	priv->fw_state = last_fw_state;
++	return ret;
++}
++
++static enum fw_upload_err pd77010_fw_write(struct fw_upload *fwl,
++					   const u8 *data, u32 offset,
++					   u32 size, u32 *written)
++{
++	struct pd692x0_priv *priv = fwl->dd_handle;
++	const struct i2c_client *client = priv->client;
++	char line[PD692X0_FW_LINE_MAX_SZ];
++	struct pd692x0_msg msg, buf;
++	int line_len, prog_cnt;
++	int chunk, b, i, ret;
++	int off;
++
++	priv->fw_state = PD692X0_FW_WRITE;
++	prog_cnt = 0;
++	i = 0;
++
++	while (i < size) {
++		line_len = pd692x0_fw_get_next_line(data + i, line, size - i);
++		if (line_len < 0) {
++			dev_err(&client->dev,
++				"Invalid firmware file format\n");
++			return FW_UPLOAD_ERR_FW_INVALID;
++		}
++		i += line_len;
++
++		if (line[0] != ':')
++			continue;
++
++		/* EOF record (type 0x01) - done */
++		if (line[7] == '0' && line[8] == '1')
++			break;
++
++		/* Only :20 records carry 32 bytes of application data */
++		if (line[1] != '2' || line[2] != '0')
++			continue;
++
++		/*
++		 * Send the 32 data bytes as four NVM program commands of
++		 * 8 bytes each. Data starts at line[9] (after :20AAAA00).
++		 * Use direct i2c_master_send/recv to avoid the 30 ms
++		 * readback delay of pd692x0_sendrecv_msg (15360 program
++		 * commands × 30 ms = ~460 s would be unacceptably slow).
++		 */
++		for (chunk = 0; chunk < 4; chunk++) {
++			msg = pd77010_msg_template_list[PD77010_NVM_DOWNLOAD_PROGRAM];
++			for (b = 0; b < 8; b++) {
++				off = 9 + chunk * 16 + b * 2;
++				msg.data[b] =
++					(hex_to_bin((u8)line[off]) << 4) |
++					hex_to_bin((u8)line[off + 1]);
++			}
++
++			priv->msg_id = pd692x0_build_msg(&msg, priv->msg_id);
++			ret = i2c_master_send(client, (u8 *)&msg, sizeof(msg));
++			if (ret != sizeof(msg))
++				return FW_UPLOAD_ERR_RW_ERROR;
++
++			ret = pd77010_fw_recv_resp(client, &buf);
++			if (ret < 0 || buf.key != PD692X0_KEY_REPORT ||
++			    buf.echo != msg.echo ||
++			    buf.sub[0] || buf.sub[1]) {
++				dev_err(&client->dev,
++					"NVM program command failed\n");
++				return FW_UPLOAD_ERR_RW_ERROR;
++			}
++
++			/*
++			 * After every 8 commands (one 64-byte NVM page) the
++			 * controller needs 2 ms to program the page to NVM.
++			 */
++			if (!(++prog_cnt % 8))
++				usleep_range(2000, 3000);
++		}
++
++		if (priv->cancel_request)
++			return FW_UPLOAD_ERR_CANCELED;
++	}
++
++	*written = i;
++	return FW_UPLOAD_ERR_NONE;
++}
++
++static enum fw_upload_err pd77010_fw_poll_complete(struct fw_upload *fwl)
++{
++	struct pd692x0_priv *priv = fwl->dd_handle;
++	const struct i2c_client *client = priv->client;
++	struct pd692x0_msg msg, buf = {0};
++	struct pd692x0_msg_ver ver;
++	int ret;
++
++	priv->fw_state = PD692X0_FW_COMPLETE;
++
++	/* Exit BOOT mode; the device resets into the new application */
++	msg = pd692x0_msg_template_list[PD692X0_MSG_DOWNLOAD_CMD];
++	ret = pd692x0_sendrecv_msg(priv, &msg, &buf);
++	if (ret < 0) {
++		dev_err(&client->dev,
++			"Failed to restart after download (%pe)\n",
++			ERR_PTR(ret));
++		priv->fw_state = PD692X0_FW_BROKEN;
++		return FW_UPLOAD_ERR_RW_ERROR;
++	}
++
++	/* Read the 15-byte reset telemetry to clear the I2C buffer */
++	msleep(30);
++	memset(&buf, 0, sizeof(buf));
++	ret = i2c_master_recv(client, (u8 *)&buf, sizeof(buf));
++	if (ret != sizeof(buf)) {
++		priv->fw_state = PD692X0_FW_BROKEN;
++		return FW_UPLOAD_ERR_RW_ERROR;
++	}
++
++	/* CPU Status1 = 0x00 means Application mode is active */
++	if (buf.key != PD692X0_KEY_TLM || buf.echo != 0xff ||
++	    buf.sub[0] != 0x00) {
++		dev_err(&client->dev,
++			"PD77010 failed to enter Application mode\n");
++		priv->fw_state = PD692X0_FW_NEED_UPDATE;
++		return FW_UPLOAD_ERR_HW_ERROR;
++	}
++
++	ver = pd692x0_get_sw_version(priv);
++	if (ver.maj_sw_ver < priv->info->fw_maj_ver) {
++		dev_err(&client->dev,
++			"Too old firmware version. Please update it\n");
++		priv->fw_state = PD692X0_FW_NEED_UPDATE;
++		return FW_UPLOAD_ERR_FW_INVALID;
++	}
++
++	ret = pd692x0_hw_conf_init(priv);
++	if (ret < 0) {
++		dev_err(&client->dev,
++			"Error configuring ports matrix (%pe)\n",
++			ERR_PTR(ret));
++		priv->fw_state = PD692X0_FW_NEED_UPDATE;
++		return FW_UPLOAD_ERR_HW_ERROR;
++	}
++
++	priv->fw_state = PD692X0_FW_OK;
++	return FW_UPLOAD_ERR_NONE;
++}
++
++static void pd77010_fw_cancel(struct fw_upload *fwl)
++{
++	struct pd692x0_priv *priv = fwl->dd_handle;
++
++	priv->cancel_request = true;
++}
++
++static void pd77010_fw_cleanup(struct fw_upload *fwl)
++{
++	struct pd692x0_priv *priv = fwl->dd_handle;
++	struct pd692x0_msg msg, buf;
++
++	switch (priv->fw_state) {
++	case PD692X0_FW_WRITE:
++		/*
++		 * Abort the incomplete download so the device resets to BOOT
++		 * mode with the broken image flagged. State becomes BROKEN.
++		 */
++		msg = pd692x0_msg_template_list[PD692X0_MSG_DOWNLOAD_CMD];
++		pd692x0_sendrecv_msg(priv, &msg, &buf);
++		msleep(30);
++		i2c_master_recv(priv->client, (u8 *)&buf, sizeof(buf));
++		fallthrough;
++	case PD692X0_FW_COMPLETE:
++		priv->fw_state = PD692X0_FW_BROKEN;
++		break;
++	default:
++		break;
++	}
++}
++
++static const struct fw_upload_ops pd77010_fw_ops = {
++	.prepare	= pd77010_fw_prepare,
++	.write		= pd77010_fw_write,
++	.poll_complete	= pd77010_fw_poll_complete,
++	.cancel		= pd77010_fw_cancel,
++	.cleanup	= pd77010_fw_cleanup,
++};
++
++static const struct pd692x0_info pd77010_info = {
++	.fw_maj_ver = PD77010_FW_MAJ_VER,
++	.fw_min_ver = PD77010_FW_MIN_VER,
++	.fw_patch_ver = PD77010_FW_PATCH_VER,
++	.pse_generation = PSE_GEN_7,
++	.pd_fw_ops = &pd77010_fw_ops,
++};
++
+ static int pd692x0_i2c_probe(struct i2c_client *client)
+ {
+ 	static const char * const regulators[] = { "vdd", "vdda" };
+@@ -1891,6 +2257,7 @@ static void pd692x0_i2c_remove(struct i2
+ 
+ static const struct i2c_device_id pd692x0_id[] = {
+ 	{ .name = PD692X0_PSE_NAME, .driver_data = (kernel_ulong_t)&pd69200_info },
++	{ .name = "pd77010", .driver_data = (kernel_ulong_t)&pd77010_info },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(i2c, pd692x0_id);
+@@ -1899,6 +2266,7 @@ static const struct of_device_id pd692x0
+ 	{ .compatible = "microchip,pd69200", .data = &pd69200_info },
+ 	{ .compatible = "microchip,pd69210", .data = &pd69200_info },
+ 	{ .compatible = "microchip,pd69220", .data = &pd69200_info },
++	{ .compatible = "microchip,pd77010", .data = &pd77010_info },
+ 	{ },
+ };
+ MODULE_DEVICE_TABLE(of, pd692x0_of_match);

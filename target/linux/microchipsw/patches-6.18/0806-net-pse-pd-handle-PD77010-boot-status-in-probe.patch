@@ -1,0 +1,86 @@
+From d488b53c318912920e10f4e3c1e8b299da258744 Mon Sep 17 00:00:00 2001
+From: Robert Marko <robert.marko@sartura.hr>
+Date: Sun, 17 May 2026 12:58:30 +0200
+Subject: [PATCH 806/808] net: pse-pd: handle PD77010 boot status in probe
+
+PD77010 reports CPU Status1 as a mode value. 0x00 means that the
+application is active and 0x01 means that BOOT is active.
+
+The existing probe path reused the PD692x0 bit interpretation and
+treated bit 0 as a controller error. Handle Gen7 status separately so
+a PD77010 with invalid firmware can still probe far enough to expose
+the firmware upload interface.
+
+Keep the existing PD692x0 bit handling unchanged for Gen6 devices.
+
+Signed-off-by: Robert Marko <robert.marko@sartura.hr>
+---
+ drivers/net/pse-pd/pd692x0.c | 50 ++++++++++++++++++++++++++++++------
+ 1 file changed, 42 insertions(+), 8 deletions(-)
+
+--- a/drivers/net/pse-pd/pd692x0.c
++++ b/drivers/net/pse-pd/pd692x0.c
+@@ -894,6 +894,43 @@ static struct pd692x0_msg_ver pd692x0_ge
+ 	return ver;
+ }
+ 
++static int pd692x0_check_controller_status(struct pd692x0_priv *priv,
++					   const struct pd692x0_msg *status)
++{
++	struct device *dev = &priv->client->dev;
++
++	if (status->key != PD692X0_KEY_TLM) {
++		dev_err(dev, "PSE controller error\n");
++		return -EIO;
++	}
++
++	if (priv->info->pse_generation == PSE_GEN_7) {
++		if (status->sub[0] == PD77010_CPU_STATUS_APP)
++			return 0;
++
++		if (status->sub[0] == PD77010_CPU_STATUS_BOOT) {
++			dev_err(dev, "PSE firmware error. Please update it.\n");
++			priv->fw_state = PD692X0_FW_BROKEN;
++			return 0;
++		}
++
++		dev_err(dev, "PSE controller error\n");
++		return -EIO;
++	}
++
++	if (status->sub[0] & 0x01) {
++		dev_err(dev, "PSE controller error\n");
++		return -EIO;
++	}
++
++	if (status->sub[0] & 0x02) {
++		dev_err(dev, "PSE firmware error. Please update it.\n");
++		priv->fw_state = PD692X0_FW_BROKEN;
++	}
++
++	return 0;
++}
++
+ struct pd692x0_manager {
+ 	struct device_node *port_node[PD692X0_MAX_MANAGER_PORTS];
+ 	struct device_node *node;
+@@ -2292,14 +2329,11 @@ static int pd692x0_i2c_probe(struct i2c_
+ 		}
+ 	}
+ 
+-	if (buf.key != 0x03 || buf.sub[0] & 0x01) {
+-		dev_err(dev, "PSE controller error\n");
+-		return -EIO;
+-	}
+-	if (buf.sub[0] & 0x02) {
+-		dev_err(dev, "PSE firmware error. Please update it.\n");
+-		priv->fw_state = PD692X0_FW_BROKEN;
+-	} else {
++	ret = pd692x0_check_controller_status(priv, &buf);
++	if (ret)
++		return ret;
++
++	if (priv->fw_state != PD692X0_FW_BROKEN) {
+ 		ver = pd692x0_get_sw_version(priv);
+ 		dev_info(&client->dev, "Software version %d.%02d.%d.%d\n",
+ 			 ver.prod, ver.maj_sw_ver, ver.min_sw_ver,

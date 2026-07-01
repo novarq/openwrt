@@ -1,0 +1,30 @@
+From 0f5fcbfa7a55d65186fe34bb98252d9a982bb92e Mon Sep 17 00:00:00 2001
+From: Robert Marko <robert.marko@sartura.hr>
+Date: Wed, 6 May 2026 13:34:25 +0200
+Subject: [PATCH 800/808] dt-bindings: net: pse-pd: microchip,pd692x0: add port
+ disable GPIO
+
+Microchip PSE controllers have a dedicated port disable input that like it
+name suggest, will disable PoE on all ports.
+
+So, lets document that GPIO.
+
+Acked-by: Rob Herring (Arm) <robh@kernel.org>
+Signed-off-by: Robert Marko <robert.marko@sartura.hr>
+---
+ .../devicetree/bindings/net/pse-pd/microchip,pd692x0.yaml     | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+--- a/Documentation/devicetree/bindings/net/pse-pd/microchip,pd692x0.yaml
++++ b/Documentation/devicetree/bindings/net/pse-pd/microchip,pd692x0.yaml
+@@ -22,6 +22,10 @@ properties:
+   reg:
+     maxItems: 1
+ 
++  disable-ports-gpios:
++    description: GPIO pin to disable PoE on all ports
++    maxItems: 1
++
+   vdd-supply:
+     description: Regulator that provides 3.3V VDD power supply.
+ 
