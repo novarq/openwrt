@@ -76,7 +76,7 @@ define Device/novarq_tactical-1000
 	DEVICE_PACKAGES := kmod-i2c-mux-gpio \
 		kmod-gpio-pwm kmod-hwmon-pwmfan kmod-hwmon-gpiofan \
 		kmod-rtc-ds1307 kmod-hwmon-lm75
-	IMAGES += emmc-gpt-table.gz emmc-atf-gpt.gz emmc-gpt.img.gz
+	IMAGES += emmc-gpt-table.gz emmc-atf-gpt.gz emmc-gpt.img.gz nor-gpt.img.gz
 	IMAGE/emmc-gpt-table.gz := tactical-1000-gpt-emmc | gzip
 	IMAGE/emmc-atf-gpt.gz := tactical-1000-gpt-emmc |\
 		pad-to 1M | lan969x-fip tactical-1000 |\
@@ -87,6 +87,9 @@ define Device/novarq_tactical-1000
 		pad-to 129M | lan969x-fip tactical-1000 |\
 		pad-to 259M | append-kernel-part |\
 		append-rootfs |\
+		gzip
+	IMAGE/nor-gpt.img.gz := lan969x-gpt-nor |\
+		pad-to 512k | lan969x-fip tactical-1000 |\
 		gzip
 	SUPPORTED_DEVICES += novarq,tactical-1000-v3
 endef
